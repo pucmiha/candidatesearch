@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container py-5">
+    <h1 class="mb-4">Candidate Search</h1>
+    <form id="search-form" hx-get="/search" hx-target="#results" hx-trigger="change from:input delay:300ms">
+        <div class="row g-3 mb-4">
+            <div class="col-md-4">
+                <select class="form-select" name="location">
+                    <option value="">All Locations</option>
+                    {% for loc in locations %}
+                    <option value="{{ loc }}">{{ loc }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <input class="form-control" type="text" name="role" placeholder="Enter job role">
+            </div>
+        </div>
+    </form>
+    <div id="results">
+        {% include 'results.html' %}
+    </div>
+</div>
+{% endblock %}

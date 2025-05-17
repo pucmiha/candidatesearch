@@ -1,114 +1,50 @@
-import streamlit as st
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 import pandas as pd
-import plotly.express as px
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-# Set page configuration
-st.set_page_config(
-    page_title="Candidate Search",
-    page_icon="👥",
-    layout="wide"
-)
+app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
 
-# Custom CSS for better styling
-st.markdown("""
-    <style>
-    .stApp {
-        background-color: #f5f5f5;
-    }
-    .card {
-        background-color: white;
-        border-radius: 10px;
-        padding: 20px;
-        margin: 10px 0;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    }
-    .card:hover {
-        box-shadow: 0 6px 8px rgba(0, 0, 0, 0.15);
-        transform: translateY(-2px);
-        transition: all 0.3s ease;
-    }
-    .header {
-        color: #1E88E5;
-        font-size: 2.5em;
-        font-weight: bold;
-        margin-bottom: 20px;
-    }
-    .subheader {
-        color: #424242;
-        font-size: 1.5em;
-        margin-bottom: 10px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+# Load candidate data
+DF = pd.read_csv('blue_collar_candidates.csv')
+LOCATIONS = sorted(DF['location'].unique().tolist())
 
-# Load the data
-@st.cache_data
-def load_data():
-    return pd.read_csv('blue_collar_candidates.csv')
+# Prepare vector search for job roles
+_vectorizer = TfidfVectorizer(stop_words='english')
+_job_matrix = _vectorizer.fit_transform(DF['job_position'])
 
-# Load data
-df = load_data()
 
-# Header
-st.markdown('<div class="header">👥 Candidate Search</div>', unsafe_allow_html=True)
+def search_candidates(role: str = "", location: str = ""):
+    df = DF
+    if location:
+        df = df[df['location'] == location]
+    if role:
+        query_vec = _vectorizer.transform([role])
+        sims = cosine_similarity(query_vec, _job_matrix[df.index]).flatten()
+        df = df.assign(similarity=sims)
+        df = df[df['similarity'] > 0].sort_values('similarity', ascending=False)
+    return df
 
-# Create two columns for filters
-col1, col2 = st.columns(2)
 
-with col1:
-    # Job position filter
-    job_positions = ['All'] + sorted(df['job_position'].unique().tolist())
-    selected_job = st.selectbox('Select Job Position', job_positions)
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    candidates = search_candidates().to_dict('records')
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "locations": LOCATIONS,
+        "candidates": candidates
+    })
 
-with col2:
-    # Location filter
-    locations = ['All'] + sorted(df['location'].unique().tolist())
-    selected_location = st.selectbox('Select Location', locations)
 
-# Filter the data
-filtered_df = df.copy()
-if selected_job != 'All':
-    filtered_df = filtered_df[filtered_df['job_position'] == selected_job]
-if selected_location != 'All':
-    filtered_df = filtered_df[filtered_df['location'] == selected_location]
-
-# Display statistics
-st.markdown('<div class="subheader">📊 Statistics</div>', unsafe_allow_html=True)
-col3, col4, col5 = st.columns(3)
-with col3:
-    st.metric("Total Candidates", len(filtered_df))
-with col4:
-    st.metric("Unique Job Positions", filtered_df['job_position'].nunique())
-with col5:
-    st.metric("Unique Locations", filtered_df['location'].nunique())
-
-# Display candidates in cards
-st.markdown('<div class="subheader">👤 Candidates</div>', unsafe_allow_html=True)
-
-# Create a grid of cards
-cols = st.columns(3)
-for idx, (_, row) in enumerate(filtered_df.iterrows()):
-    with cols[idx % 3]:
-        st.markdown(f"""
-            <div class="card">
-                <h3>{row['firstname']} {row['lastname']}</h3>
-                <p><strong>Position:</strong> {row['job_position']}</p>
-                <p><strong>Location:</strong> {row['location']}</p>
-            </div>
-        """, unsafe_allow_html=True)
-
-# Add a visualization
-st.markdown('<div class="subheader">📈 Job Distribution</div>', unsafe_allow_html=True)
-job_counts = filtered_df['job_position'].value_counts()
-fig = px.bar(
-    x=job_counts.index,
-    y=job_counts.values,
-    title='Distribution of Job Positions',
-    labels={'x': 'Job Position', 'y': 'Number of Candidates'}
-)
-fig.update_layout(
-    xaxis_tickangle=-45,
-    height=400,
-    margin=dict(b=100)
-)
-st.plotly_chart(fig, use_container_width=True)
+@app.get("/search", response_class=HTMLResponse)
+async def search(request: Request, role: str = "", location: str = ""):
+    candidates = search_candidates(role, location).to_dict('records')
+    return templates.TemplateResponse("results.html", {
+        "request": request,
+        "candidates": candidates
+    })
